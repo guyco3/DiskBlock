@@ -42,7 +42,7 @@ cargo run -- /System
 
 ## Install From Release
 
-Install latest with curl + sh (no clone, no sudo required):
+Install latest with curl + sh:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/guyco3/memblocks/main/install.sh | sh
