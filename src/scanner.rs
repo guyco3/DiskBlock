@@ -36,7 +36,6 @@ pub fn spawn_scanner() -> ScannerHandle {
     let (evt_tx, evt_rx) = unbounded::<ScanEvent>();
     let (watch_tx, watch_rx) = unbounded::<PathBuf>();
 
-    // Scanner thread for directory scanning
     let scanner_evt_tx = evt_tx.clone();
     thread::spawn(move || {
         while let Ok(req) = req_rx.recv() {
@@ -51,7 +50,6 @@ pub fn spawn_scanner() -> ScannerHandle {
         }
     });
 
-    // Watcher thread for filesystem change detection
     let watcher_evt_tx = evt_tx.clone();
     thread::spawn(move || {
         let mut watcher: Option<Box<dyn Watcher>> = None;
@@ -59,7 +57,6 @@ pub fn spawn_scanner() -> ScannerHandle {
             std::sync::Arc::new(Mutex::new(std::collections::HashSet::new()));
 
         while let Ok(path) = watch_rx.recv() {
-            // Initialize watcher on first watch request
             if watcher.is_none() {
                 let evt_tx_clone = watcher_evt_tx.clone();
                 let watched_clone = watched_paths.clone();
@@ -72,7 +69,6 @@ pub fn spawn_scanner() -> ScannerHandle {
                             ..
                         }) => {
                             if let Ok(watched) = watched_clone.lock() {
-                                // Find which watched directory contains this event
                                 for watch_dir in watched.iter() {
                                     for changed_path in &paths {
                                         if changed_path.starts_with(watch_dir) {
@@ -93,7 +89,6 @@ pub fn spawn_scanner() -> ScannerHandle {
                 }
             }
 
-            // Add path to watched set and watch it
             if let Some(ref mut w) = watcher {
                 if path.is_dir() {
                     let _ = w.watch(&path, notify::RecursiveMode::NonRecursive);
@@ -154,6 +149,16 @@ fn scan_children_normal(path: &Path, evt_tx: &Sender<ScanEvent>) -> Result<Vec<N
         .map(|entry| entry.path())
         .collect::<Vec<_>>();
 
+    let mut permission_needed = false;
+    for child in &entries {
+        if let Ok(meta) = fs::symlink_metadata(child) {
+            if meta.is_dir() && fs::read_dir(child).is_err() {
+                permission_needed = true;
+                break;
+            }
+        }
+    }
+
     let (node_tx, node_rx) = unbounded::<Node>();
     let producer_entries = entries;
 
@@ -173,7 +178,6 @@ fn scan_children_normal(path: &Path, evt_tx: &Sender<ScanEvent>) -> Result<Vec<N
                     path: child.clone(),
                     size,
                     kind,
-                    children: None,
                 })
             })
             .for_each(|node| {
@@ -191,6 +195,12 @@ fn scan_children_normal(path: &Path, evt_tx: &Sender<ScanEvent>) -> Result<Vec<N
     }
 
     let _ = producer.join();
+
+    if permission_needed {
+        let _ = evt_tx.send(ScanEvent::PermissionRequired {
+            path: path.to_path_buf(),
+        });
+    }
 
     Ok(nodes)
 }
@@ -231,7 +241,6 @@ fn scan_children_with_sudo(path: &Path, evt_tx: &Sender<ScanEvent>) -> Result<Ve
             path: child.clone(),
             size,
             kind,
-            children: None,
         };
         let _ = evt_tx.send(ScanEvent::Partial {
             path: path.to_path_buf(),
@@ -252,9 +261,6 @@ fn du_size_sudo(path: &Path) -> Option<u64> {
         .output()
         .ok()?;
 
-    if !output.status.success() {
-        return None;
-    }
     let text = String::from_utf8_lossy(&output.stdout);
     let kb = text.split_whitespace().next()?.parse::<u64>().ok()?;
     Some(kb * 1024)
@@ -267,9 +273,6 @@ fn du_size(path: &Path) -> Option<u64> {
         .output()
         .ok()?;
 
-    if !output.status.success() {
-        return None;
-    }
     let text = String::from_utf8_lossy(&output.stdout);
     let kb = text.split_whitespace().next()?.parse::<u64>().ok()?;
     Some(kb * 1024)

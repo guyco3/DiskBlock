@@ -1,19 +1,21 @@
 use std::path::PathBuf;
 
+/// Classifies a filesystem node as directory or file.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NodeKind {
     Directory,
     File,
 }
 
+/// A scanned filesystem entry and its measured size.
 #[derive(Debug, Clone)]
 pub struct Node {
     pub path: PathBuf,
     pub size: u64,
     pub kind: NodeKind,
-    pub children: Option<Vec<Node>>, // lazily loaded
 }
 
+/// Final scan payload for a single directory.
 #[derive(Debug, Clone)]
 pub struct ScanResult {
     pub path: PathBuf,
@@ -21,14 +23,17 @@ pub struct ScanResult {
     pub size: u64,
 }
 
+/// Events emitted by scanner threads.
 #[derive(Debug, Clone)]
 pub enum ScanEvent {
     Partial { path: PathBuf, node: Node },
     Loaded(ScanResult),
     Error { path: PathBuf, error: String },
-    CacheInvalidate { path: PathBuf }, // notify that a cached dir changed on disk
+    PermissionRequired { path: PathBuf },
+    CacheInvalidate { path: PathBuf },
 }
 
+/// A concrete rectangle rendered in the treemap area.
 #[derive(Debug, Clone)]
 pub struct RectNode {
     pub path: PathBuf,
@@ -39,6 +44,4 @@ pub struct RectNode {
     pub size: u64,
     pub label: String,
     pub is_dir: bool,
-    pub is_other: bool,
-    pub other_items: Vec<String>,
 }

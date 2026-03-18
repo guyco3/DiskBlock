@@ -16,10 +16,20 @@ use crossterm::terminal::{
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use scanner::{can_read_dir, spawn_scanner};
+use std::collections::HashSet;
 use std::env;
 use std::io;
 use std::path::PathBuf;
 use std::time::Duration;
+
+/// Returns the drawable bounds for the main treemap pane.
+fn current_main_bounds(
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+) -> io::Result<crate::layout::Bounds> {
+    let size = terminal.size()?;
+    let area = ratatui::layout::Rect::new(0, 0, size.width, size.height);
+    Ok(ui::main_bounds_from_terminal(area))
+}
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let root = env::args().nth(1).unwrap_or_else(|| "/".to_string());
@@ -51,9 +61,32 @@ fn run_app(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     app: &mut App,
 ) -> io::Result<()> {
+    let mut prompted_sudo_paths: HashSet<PathBuf> = HashSet::new();
+
     loop {
         while let Ok(event) = app.scanner.rx.try_recv() {
-            app.on_scan_event(event);
+            match event {
+                crate::types::ScanEvent::PermissionRequired { path } => {
+                    if prompted_sudo_paths.contains(&path) {
+                        continue;
+                    }
+
+                    prompted_sudo_paths.insert(path.clone());
+                    app.status = format!(
+                        "Need sudo to scan protected entries in {}",
+                        path.display()
+                    );
+
+                    suspend_terminal(terminal)?;
+                    let auth = prompt_sudo_auth();
+                    resume_terminal(terminal)?;
+                    match auth {
+                        Ok(()) => app.rescan_with_sudo(path),
+                        Err(err) => app.status = format!("Sudo skipped/failed: {err}"),
+                    }
+                }
+                other => app.on_scan_event(other),
+            }
         }
 
         terminal.draw(|f| ui::draw(f, app))?;
@@ -63,54 +96,34 @@ fn run_app(
                 if key.kind != KeyEventKind::Press {
                     continue;
                 }
+
                 match key.code {
                     KeyCode::Char('q') => break,
                     KeyCode::Down => {
-                        let size = terminal.size()?;
-                        let area = ratatui::layout::Rect::new(0, 0, size.width, size.height);
-                        let bounds = ui::main_bounds_from_terminal(area);
-                        app.move_geometric(NavDirection::Down, bounds);
+                        app.move_geometric(NavDirection::Down, current_main_bounds(terminal)?);
                     }
                     KeyCode::Up => {
-                        let size = terminal.size()?;
-                        let area = ratatui::layout::Rect::new(0, 0, size.width, size.height);
-                        let bounds = ui::main_bounds_from_terminal(area);
-                        app.move_geometric(NavDirection::Up, bounds);
+                        app.move_geometric(NavDirection::Up, current_main_bounds(terminal)?);
                     }
                     KeyCode::Left => {
-                        let size = terminal.size()?;
-                        let area = ratatui::layout::Rect::new(0, 0, size.width, size.height);
-                        let bounds = ui::main_bounds_from_terminal(area);
-                        app.move_geometric(NavDirection::Left, bounds);
+                        app.move_geometric(NavDirection::Left, current_main_bounds(terminal)?);
                     }
                     KeyCode::Right => {
-                        let size = terminal.size()?;
-                        let area = ratatui::layout::Rect::new(0, 0, size.width, size.height);
-                        let bounds = ui::main_bounds_from_terminal(area);
-                        app.move_geometric(NavDirection::Right, bounds);
+                        app.move_geometric(NavDirection::Right, current_main_bounds(terminal)?);
                     }
-                    KeyCode::Char('j') => app.move_next(),
+                    KeyCode::Char('j') => {
+                        app.move_next(current_main_bounds(terminal)?);
+                    }
                     KeyCode::Char('k') => app.move_prev(),
                     KeyCode::Char('h') | KeyCode::Char('u') | KeyCode::Backspace => {
                         app.go_parent()
                     }
                     KeyCode::Enter | KeyCode::Char('l') => {
-                        let size = terminal.size()?;
-                        let area = ratatui::layout::Rect::new(0, 0, size.width, size.height);
-                        let bounds = ui::main_bounds_from_terminal(area);
+                        let bounds = current_main_bounds(terminal)?;
 
                         if let Some(selected) = app.selected_rendered_node(bounds) {
                             if selected.kind == crate::types::NodeKind::Directory {
-                                let is_virtual_other = selected
-                                    .path
-                                    .file_name()
-                                    .and_then(|n| n.to_str())
-                                    .map(|n| n == "<Other>")
-                                    .unwrap_or(false);
-
-                                if is_virtual_other {
-                                    app.enter_node(selected, false);
-                                } else if can_read_dir(&selected.path) {
+                                if can_read_dir(&selected.path) {
                                     app.enter_node(selected, false);
                                 } else {
                                     suspend_terminal(terminal)?;
@@ -125,9 +138,7 @@ fn run_app(
                         }
                     }
                     KeyCode::Char('c') => {
-                        let size = terminal.size()?;
-                        let area = ratatui::layout::Rect::new(0, 0, size.width, size.height);
-                        let bounds = ui::main_bounds_from_terminal(area);
+                        let bounds = current_main_bounds(terminal)?;
 
                         if let Some(rect) = app.selected_rendered_rect(bounds) {
                             match copy_path_to_clipboard(&rect.path) {

@@ -1,8 +1,10 @@
+use crate::format::human_size;
 use crate::scanner::ScannerHandle;
 use crate::types::{Node, NodeKind, RectNode, ScanEvent};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
+/// Direction for geometric sibling navigation.
 #[derive(Debug, Clone, Copy)]
 pub enum NavDirection {
     Left,
@@ -11,6 +13,7 @@ pub enum NavDirection {
     Down,
 }
 
+/// Cached scanning and rendering state for a directory.
 #[derive(Debug, Clone)]
 pub struct DirectoryState {
     pub children: Vec<Node>,
@@ -22,6 +25,7 @@ pub struct DirectoryState {
     pub error: Option<String>,
 }
 
+/// Core application state used by input handling and rendering.
 #[derive(Debug, Clone)]
 pub struct App {
     pub current_path: PathBuf,
@@ -34,11 +38,10 @@ pub struct App {
     pub disk_total: u64,
     sudo_paths: HashSet<PathBuf>,
     pub show_help: bool,
-    viewing_other_parent: Option<PathBuf>, // if Some(parent_path), we're viewing an Other directory
-    other_items: Vec<Node>,                 // items being displayed in Other view
 }
 
 impl App {
+    /// Creates a new app rooted at `root_path` and starts the initial scan.
     pub fn new(root_path: PathBuf, scanner: ScannerHandle) -> Self {
         let mut dirs = HashMap::new();
         dirs.insert(
@@ -65,8 +68,6 @@ impl App {
             disk_total: crate::scanner::disk_total_bytes(&root_path).unwrap_or(0),
             sudo_paths: HashSet::new(),
             show_help: false,
-            viewing_other_parent: None,
-            other_items: Vec::new(),
         };
 
         app.scanner.request(root_path, false);
@@ -77,22 +78,7 @@ impl App {
         self.dirs.get(&self.current_path)
     }
 
-    pub fn selected_child(&self) -> Option<&Node> {
-        self.current_state()?.children.get(self.selected_idx)
-    }
-
-    pub fn is_viewing_other(&self) -> bool {
-        self.viewing_other_parent.is_some()
-    }
-
     pub fn current_render_nodes(&self) -> Option<Vec<Node>> {
-        // If viewing Other directory, return those items sorted by size
-        if self.viewing_other_parent.is_some() {
-            let mut items = self.other_items.clone();
-            items.sort_by(|a, b| b.size.cmp(&a.size));
-            return Some(items);
-        }
-
         let state = self.current_state()?;
         let mut render_nodes = state.children.clone();
         if state.loading && state.size > state.loaded_size {
@@ -100,7 +86,6 @@ impl App {
                 path: self.current_path.join("<Loading>"),
                 size: state.size - state.loaded_size,
                 kind: NodeKind::File,
-                children: None,
             });
         }
         Some(render_nodes)
@@ -125,19 +110,15 @@ impl App {
     pub fn selected_rendered_node(&self, bounds: crate::layout::Bounds) -> Option<Node> {
         let rect = self.selected_rendered_rect(bounds)?;
         let render_nodes = self.current_render_nodes()?;
-        let display_nodes = crate::layout::build_display_nodes(&self.current_path, &render_nodes);
-        display_nodes.into_iter().find(|n| n.path == rect.path)
+        render_nodes.into_iter().find(|n| n.path == rect.path)
     }
 
-    fn current_display_len(&self) -> usize {
-        let Some(render_nodes) = self.current_render_nodes() else {
-            return 0;
-        };
-        crate::layout::build_display_nodes(&self.current_path, &render_nodes).len()
+    fn current_display_len(&self, _bounds: crate::layout::Bounds) -> usize {
+        self.current_render_nodes().map_or(0, |nodes| nodes.len())
     }
 
-    pub fn move_next(&mut self) {
-        let len = self.current_display_len();
+    pub fn move_next(&mut self, bounds: crate::layout::Bounds) {
+        let len = self.current_display_len(bounds);
         if len == 0 {
             return;
         }
@@ -168,8 +149,11 @@ impl App {
         }
 
         let current = &rects[self.selected_idx];
-        let cx = center_x(current.x, current.width);
-        let cy = center_y(current.y, current.height);
+        let cur_x = i32::from(current.x);
+        let cur_y = i32::from(current.y);
+
+        let mut by_yx: Vec<usize> = (0..rects.len()).collect();
+        by_yx.sort_by_key(|&i| (rects[i].y, rects[i].x));
 
         let mut best_idx: Option<usize> = None;
         let mut best_score = (u32::MAX, u32::MAX, u32::MAX);
@@ -179,70 +163,58 @@ impl App {
                 continue;
             }
 
-            let tx = center_x(rect.x, rect.width);
-            let ty = center_y(rect.y, rect.height);
-            let dx = tx - cx;
-            let dy = ty - cy;
+            let tx = i32::from(rect.x);
+            let ty = i32::from(rect.y);
 
-            let valid = match direction {
-                NavDirection::Left => dx < 0,
-                NavDirection::Right => dx > 0,
-                NavDirection::Up => dy < 0,
-                NavDirection::Down => dy > 0,
+            let candidate = match direction {
+                NavDirection::Right if tx > cur_x => {
+                    Some(((ty - cur_y).unsigned_abs(), (tx - cur_x) as u32, tx.unsigned_abs()))
+                }
+                NavDirection::Left if tx < cur_x => {
+                    Some(((ty - cur_y).unsigned_abs(), (cur_x - tx) as u32, tx.unsigned_abs()))
+                }
+                NavDirection::Down if ty > cur_y => {
+                    Some(((ty - cur_y) as u32, (tx - cur_x).unsigned_abs(), tx.unsigned_abs()))
+                }
+                NavDirection::Up if ty < cur_y => {
+                    Some(((cur_y - ty) as u32, (tx - cur_x).unsigned_abs(), tx.unsigned_abs()))
+                }
+                _ => None,
             };
-            if !valid {
-                continue;
-            }
 
-            let primary = match direction {
-                NavDirection::Left | NavDirection::Right => dx.unsigned_abs(),
-                NavDirection::Up | NavDirection::Down => dy.unsigned_abs(),
-            };
-            let secondary = match direction {
-                NavDirection::Left | NavDirection::Right => dy.unsigned_abs(),
-                NavDirection::Up | NavDirection::Down => dx.unsigned_abs(),
-            };
-            let euclid_sq = dx.unsigned_abs().saturating_mul(dx.unsigned_abs())
-                + dy.unsigned_abs().saturating_mul(dy.unsigned_abs());
-            let score = (primary, secondary, euclid_sq);
-
-            if score < best_score {
-                best_score = score;
-                best_idx = Some(idx);
+            if let Some(score) = candidate {
+                if score < best_score {
+                    best_score = score;
+                    best_idx = Some(idx);
+                }
             }
         }
 
         if let Some(idx) = best_idx {
             self.selected_idx = idx;
+            return;
         }
-    }
 
-    pub fn can_enter_selected(&self) -> bool {
-        self.selected_child()
-            .map(|n| n.kind == NodeKind::Directory)
-            .unwrap_or(false)
+        if let Some(pos) = by_yx.iter().position(|&i| i == self.selected_idx) {
+            match direction {
+                NavDirection::Down | NavDirection::Right => {
+                    if let Some(&next) = by_yx.get(pos + 1) {
+                        self.selected_idx = next;
+                    }
+                }
+                NavDirection::Up | NavDirection::Left => {
+                    if pos > 0 {
+                        self.selected_idx = by_yx[pos - 1];
+                    }
+                }
+            }
+        }
     }
 
     pub fn enter_node(&mut self, selected: Node, use_sudo: bool) {
         if selected.kind != NodeKind::Directory {
             return;
         }
-
-        // Check if this is an <Other> virtual directory
-        if selected.path.file_name().and_then(|n| n.to_str()) == Some("<Other>") {
-            if let Some(other_children) = selected.children {
-                self.viewing_other_parent = Some(self.current_path.clone());
-                self.current_path = self.current_path.join("<Other>");
-                self.other_items = other_children;
-                self.selected_idx = 0;
-                self.status = format!("Viewing {} items", self.other_items.len());
-            }
-            return;
-        }
-
-        // Exit Other view if we're entering a real directory
-        self.viewing_other_parent = None;
-        self.other_items.clear();
 
         if use_sudo {
             self.sudo_paths.insert(selected.path.clone());
@@ -269,20 +241,10 @@ impl App {
             self.status = format!("Scanning {}", selected.path.display());
         }
 
-        // Watch the directory for filesystem changes
         self.scanner.watch(selected.path.clone());
     }
 
     pub fn go_parent(&mut self) {
-        // If viewing Other, exit to the parent directory we were in
-        if let Some(parent) = self.viewing_other_parent.take() {
-            self.current_path = parent.clone();
-            self.other_items.clear();
-            self.selected_idx = 0;
-            self.status = format!("Viewing {}", self.current_path.display());
-            return;
-        }
-
         if self.current_path == self.root_path {
             return;
         }
@@ -333,6 +295,8 @@ impl App {
                 self.status = format!("Loaded {}", result.path.display());
             }
             ScanEvent::Partial { path, node } => {
+                let item_path = node.path.clone();
+                let item_kind = node.kind;
                 let state = self.dirs.entry(path.clone()).or_insert(DirectoryState {
                     children: Vec::new(),
                     size: 0,
@@ -351,6 +315,21 @@ impl App {
                 if path == self.root_path {
                     self.root_size = state.size;
                 }
+
+                let item_name = item_path.file_name().and_then(|n| n.to_str()).unwrap_or("/");
+                let kind_prefix = if item_kind == NodeKind::Directory {
+                    "dir"
+                } else {
+                    "file"
+                };
+                self.status = format!(
+                    "Scanning {} | current {}: {} | discovered {} items | {}",
+                    path.display(),
+                    kind_prefix,
+                    item_name,
+                    state.children.len(),
+                    human_size(state.loaded_size)
+                );
             }
             ScanEvent::Error { path, error } => {
                 let state = self.dirs.entry(path.clone()).or_insert(DirectoryState {
@@ -364,10 +343,12 @@ impl App {
                 });
                 state.loading = false;
                 state.error = Some(error.clone());
-                self.status = format!("{}", error);
+                self.status = error;
+            }
+            ScanEvent::PermissionRequired { path } => {
+                self.status = format!("Permission required for {}", path.display());
             }
             ScanEvent::CacheInvalidate { path } => {
-                // Clear the cache for this directory and re-scan it
                 if let Some(state) = self.dirs.get_mut(&path) {
                     state.children.clear();
                     state.loaded_size = 0;
@@ -385,6 +366,30 @@ impl App {
                 }
             }
         }
+    }
+
+    pub fn rescan_with_sudo(&mut self, path: PathBuf) {
+        self.sudo_paths.insert(path.clone());
+
+        let state = self.dirs.entry(path.clone()).or_insert(DirectoryState {
+            children: Vec::new(),
+            size: 0,
+            loaded_size: 0,
+            size_locked: false,
+            loading: true,
+            loaded: false,
+            error: None,
+        });
+        state.children.clear();
+        state.loaded_size = 0;
+        state.size_locked = false;
+        state.loading = true;
+        state.loaded = false;
+        state.error = None;
+
+        self.scanner.request(path.clone(), true);
+        self.scanner.watch(path.clone());
+        self.status = format!("Rescanning with sudo {}", path.display());
     }
 
     pub fn breadcrumbs(&self) -> Vec<PathBuf> {
@@ -408,12 +413,4 @@ impl App {
     pub fn toggle_help(&mut self) {
         self.show_help = !self.show_help;
     }
-}
-
-fn center_x(x: u16, w: u16) -> i32 {
-    i32::from(x) + i32::from(w) / 2
-}
-
-fn center_y(y: u16, h: u16) -> i32 {
-    i32::from(y) + i32::from(h) / 2
 }

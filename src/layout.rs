@@ -1,9 +1,6 @@
 use crate::types::{Node, RectNode};
 use std::path::Path;
 
-const CUMULATIVE_PERCENT_TARGET: f64 = 80.0;
-const MAX_VISIBLE_NODES: usize = 20;
-
 #[derive(Debug, Clone, Copy)]
 pub struct Bounds {
     pub x: u16,
@@ -12,52 +9,13 @@ pub struct Bounds {
     pub height: u16,
 }
 
-pub fn compute_partition(root_path: &Path, children: &[Node], bounds: Bounds) -> Vec<RectNode> {
-    compute_partition_oriented(root_path, children, bounds, true)
-}
-
-pub fn build_display_nodes(root_path: &Path, children: &[Node]) -> Vec<Node> {
-    let mut sorted = children.to_vec();
-    sorted.sort_by(|a, b| b.size.cmp(&a.size));
-
-    let total = sorted.iter().map(|n| n.size).sum::<u64>().max(1);
-    let mut kept = Vec::new();
-    let mut other = Vec::new();
-
-    // Keep showing items until cumulative size reaches CUMULATIVE_PERCENT_TARGET.
-    let target_size = (total as f64 * (CUMULATIVE_PERCENT_TARGET / 100.0)) as u64;
-    let mut cumulative = 0u64;
-
-    for node in sorted {
-        if cumulative >= target_size || kept.len() >= MAX_VISIBLE_NODES {
-            other.push(node);
-        } else {
-            cumulative += node.size;
-            kept.push(node);
-        }
-    }
-
-    let other_size = other.iter().map(|n| n.size).sum::<u64>();
-    if other_size > 0 {
-        kept.push(Node {
-            path: root_path.join("<Other>"),
-            size: other_size,
-            kind: crate::types::NodeKind::Directory,
-            children: Some(other),
-        });
-    }
-
-    kept
-}
-
 pub fn compute_partition_oriented(
-    root_path: &Path,
+    _root_path: &Path,
     children: &[Node],
     bounds: Bounds,
     _horizontal: bool,
 ) -> Vec<RectNode> {
-    let kept = build_display_nodes(root_path, children);
-    partition_level(&kept, bounds)
+    partition_level(children, bounds)
 }
 
 fn partition_level(children: &[Node], bounds: Bounds) -> Vec<RectNode> {
@@ -71,132 +29,119 @@ fn partition_level(children: &[Node], bounds: Bounds) -> Vec<RectNode> {
         return out;
     }
 
-    let total_area = f64::from(bounds.width) * f64::from(bounds.height);
-    let mut items: Vec<(&Node, f64)> = children
-        .iter()
-        .map(|n| (n, (n.size as f64 / total_size as f64) * total_area))
-        .collect();
-
-    items.sort_by(|a, b| b.0.size.cmp(&a.0.size));
-
-    let mut remaining = bounds;
-    let mut cursor = 0usize;
-
-    while cursor < items.len() && remaining.width > 0 && remaining.height > 0 {
-        let horizontal = remaining.width >= remaining.height;
-        let span = if horizontal {
-            f64::from(remaining.width)
-        } else {
-            f64::from(remaining.height)
-        };
-        if span <= 0.0 {
-            break;
-        }
-
-        let mut row_end = cursor + 1;
-        let mut row_areas = vec![items[cursor].1.max(0.0001)];
-        while row_end < items.len() {
-            let mut candidate = row_areas.clone();
-            candidate.push(items[row_end].1.max(0.0001));
-            if worst_aspect_ratio(&candidate, span) <= worst_aspect_ratio(&row_areas, span) {
-                row_areas = candidate;
-                row_end += 1;
-            } else {
-                break;
-            }
-        }
-
-        let row_nodes = &items[cursor..row_end];
-        let row_total_size = row_nodes.iter().map(|(n, _)| n.size).sum::<u64>();
-        if row_total_size == 0 {
-            cursor = row_end;
-            continue;
-        }
-
-        let is_last_row = row_end >= items.len();
-        if horizontal {
-            let mut row_h = if is_last_row {
-                remaining.height
-            } else {
-                let h = (row_areas.iter().sum::<f64>() / span).round() as i32;
-                h.clamp(1, i32::from(remaining.height)) as u16
-            };
-            if row_h == 0 {
-                row_h = 1;
-            }
-
-            let mut x = remaining.x;
-            for (idx, (child, _)) in row_nodes.iter().enumerate() {
-                let is_last = idx == row_nodes.len() - 1;
-                let w = if is_last {
-                    remaining.x + remaining.width - x
-                } else {
-                    proportional_len(child.size, row_total_size, remaining.width)
-                };
-                if w == 0 {
-                    continue;
-                }
-                out.push(make_rect_node(child, x, remaining.y, w, row_h));
-                x = x.saturating_add(w);
-            }
-
-            remaining.y = remaining.y.saturating_add(row_h);
-            remaining.height = remaining.height.saturating_sub(row_h);
-        } else {
-            let mut row_w = if is_last_row {
-                remaining.width
-            } else {
-                let w = (row_areas.iter().sum::<f64>() / span).round() as i32;
-                w.clamp(1, i32::from(remaining.width)) as u16
-            };
-            if row_w == 0 {
-                row_w = 1;
-            }
-
-            let mut y = remaining.y;
-            for (idx, (child, _)) in row_nodes.iter().enumerate() {
-                let is_last = idx == row_nodes.len() - 1;
-                let h = if is_last {
-                    remaining.y + remaining.height - y
-                } else {
-                    proportional_len(child.size, row_total_size, remaining.height)
-                };
-                if h == 0 {
-                    continue;
-                }
-                out.push(make_rect_node(child, remaining.x, y, row_w, h));
-                y = y.saturating_add(h);
-            }
-
-            remaining.x = remaining.x.saturating_add(row_w);
-            remaining.width = remaining.width.saturating_sub(row_w);
-        }
-
-        cursor = row_end;
-    }
+    let mut ordered: Vec<&Node> = children.iter().collect();
+    ordered.sort_by(|a, b| b.size.cmp(&a.size));
+    partition_binary(&mut out, &ordered, bounds);
 
     out
 }
 
-fn worst_aspect_ratio(areas: &[f64], span: f64) -> f64 {
-    if areas.is_empty() || span <= 0.0 {
-        return f64::INFINITY;
-    }
-    let sum = areas.iter().sum::<f64>();
-    if sum <= 0.0 {
-        return f64::INFINITY;
-    }
-    let min_area = areas.iter().copied().fold(f64::INFINITY, f64::min);
-    let max_area = areas.iter().copied().fold(0.0, f64::max);
-    if min_area <= 0.0 {
-        return f64::INFINITY;
+fn partition_binary(out: &mut Vec<RectNode>, nodes: &[&Node], bounds: Bounds) {
+    if nodes.is_empty() || bounds.width == 0 || bounds.height == 0 {
+        return;
     }
 
-    let span_sq = span * span;
-    let sum_sq = sum * sum;
-    let a = (span_sq * max_area) / sum_sq;
-    let b = sum_sq / (span_sq * min_area);
-    a.max(b)
+    if nodes.len() == 1 {
+        out.push(make_rect_node(nodes[0], bounds.x, bounds.y, bounds.width, bounds.height));
+        return;
+    }
+
+    let total: u64 = nodes.iter().map(|n| n.size).sum();
+    if total == 0 {
+        return;
+    }
+
+    let mut acc = 0u64;
+    let half = total / 2;
+    let mut split_idx = 1usize;
+    while split_idx < nodes.len() {
+        let next = acc + nodes[split_idx - 1].size;
+        if next >= half {
+            break;
+        }
+        acc = next;
+        split_idx += 1;
+    }
+    split_idx = split_idx.clamp(1, nodes.len() - 1);
+    let left_total = nodes[..split_idx].iter().map(|n| n.size).sum::<u64>();
+    let right_total = total.saturating_sub(left_total);
+
+    let prefer_vertical = should_split_vertical(bounds, left_total, total);
+    if prefer_vertical {
+        let mut left_w = if right_total == 0 {
+            bounds.width
+        } else {
+            proportional_len(left_total, total, bounds.width)
+        };
+        left_w = left_w.clamp(1, bounds.width.saturating_sub(1).max(1));
+        let right_w = bounds.width.saturating_sub(left_w);
+
+        let left_bounds = Bounds {
+            x: bounds.x,
+            y: bounds.y,
+            width: left_w,
+            height: bounds.height,
+        };
+        let right_bounds = Bounds {
+            x: bounds.x.saturating_add(left_w),
+            y: bounds.y,
+            width: right_w,
+            height: bounds.height,
+        };
+
+        partition_binary(out, &nodes[..split_idx], left_bounds);
+        if right_w > 0 {
+            partition_binary(out, &nodes[split_idx..], right_bounds);
+        }
+    } else {
+        let mut top_h = if right_total == 0 {
+            bounds.height
+        } else {
+            proportional_len(left_total, total, bounds.height)
+        };
+        top_h = top_h.clamp(1, bounds.height.saturating_sub(1).max(1));
+        let bottom_h = bounds.height.saturating_sub(top_h);
+
+        let top_bounds = Bounds {
+            x: bounds.x,
+            y: bounds.y,
+            width: bounds.width,
+            height: top_h,
+        };
+        let bottom_bounds = Bounds {
+            x: bounds.x,
+            y: bounds.y.saturating_add(top_h),
+            width: bounds.width,
+            height: bottom_h,
+        };
+
+        partition_binary(out, &nodes[..split_idx], top_bounds);
+        if bottom_h > 0 {
+            partition_binary(out, &nodes[split_idx..], bottom_bounds);
+        }
+    }
+}
+
+fn should_split_vertical(bounds: Bounds, left_total: u64, total: u64) -> bool {
+    if bounds.width == 0 || bounds.height == 0 || total == 0 {
+        return bounds.width >= bounds.height;
+    }
+
+    let left_w = proportional_len(left_total, total, bounds.width).clamp(1, bounds.width.max(1));
+    let right_w = bounds.width.saturating_sub(left_w).max(1);
+    let vert_score = aspect_ratio(left_w, bounds.height).max(aspect_ratio(right_w, bounds.height));
+
+    let top_h = proportional_len(left_total, total, bounds.height).clamp(1, bounds.height.max(1));
+    let bottom_h = bounds.height.saturating_sub(top_h).max(1);
+    let hori_score = aspect_ratio(bounds.width, top_h).max(aspect_ratio(bounds.width, bottom_h));
+
+    vert_score <= hori_score
+}
+
+fn aspect_ratio(w: u16, h: u16) -> f64 {
+    let wf = f64::from(w.max(1));
+    let hf = f64::from(h.max(1));
+    if wf >= hf { wf / hf } else { hf / wf }
 }
 
 fn make_rect_node(child: &Node, x: u16, y: u16, width: u16, height: u16) -> RectNode {
@@ -216,22 +161,6 @@ fn make_rect_node(child: &Node, x: u16, y: u16, width: u16, height: u16) -> Rect
         size: child.size,
         label,
         is_dir: matches!(child.kind, crate::types::NodeKind::Directory),
-        is_other: child
-            .path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .map(|n| n == "<Other>")
-            .unwrap_or(false),
-        other_items: child
-            .children
-            .as_ref()
-            .map(|items| {
-                items
-                    .iter()
-                    .filter_map(|n| n.path.file_name().and_then(|x| x.to_str()).map(|s| s.to_string()))
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default(),
     }
 }
 
@@ -253,43 +182,42 @@ mod tests {
     #[test]
     fn partitions_fill_area() {
         let nodes = vec![
-            Node { path: PathBuf::from("a"), size: 60, kind: NodeKind::Directory, children: None },
-            Node { path: PathBuf::from("b"), size: 30, kind: NodeKind::Directory, children: None },
-            Node { path: PathBuf::from("c"), size: 10, kind: NodeKind::Directory, children: None },
+            Node { path: PathBuf::from("a"), size: 60, kind: NodeKind::Directory },
+            Node { path: PathBuf::from("b"), size: 30, kind: NodeKind::Directory },
+            Node { path: PathBuf::from("c"), size: 10, kind: NodeKind::Directory },
         ];
         let bounds = Bounds { x: 0, y: 0, width: 100, height: 20 };
-        let rects = compute_partition(Path::new("/"), &nodes, bounds);
+        let rects = compute_partition_oriented(Path::new("/"), &nodes, bounds, true);
         let sum_area: u32 = rects.iter().map(area).sum();
         assert_eq!(sum_area, u32::from(bounds.width) * u32::from(bounds.height));
     }
 
     #[test]
-    fn tiny_items_are_grouped_into_other() {
+    fn renders_all_items_without_grouping() {
         let mut nodes = Vec::new();
-        nodes.push(Node { path: PathBuf::from("big"), size: 10_000, kind: NodeKind::Directory, children: None });
+        nodes.push(Node { path: PathBuf::from("big"), size: 10_000, kind: NodeKind::Directory });
         for i in 0..50 {
             nodes.push(Node {
                 path: PathBuf::from(format!("small-{i}.txt")),
                 size: 10,
                 kind: NodeKind::File,
-                children: None,
             });
         }
 
         let bounds = Bounds { x: 0, y: 0, width: 120, height: 30 };
-        let rects = compute_partition(Path::new("/"), &nodes, bounds);
-        assert!(rects.iter().any(|r| r.is_other));
+        let rects = compute_partition_oriented(Path::new("/"), &nodes, bounds, true);
+        assert_eq!(rects.len(), nodes.len());
     }
 
     #[test]
     fn partitions_have_no_overlap() {
         let nodes = vec![
-            Node { path: PathBuf::from("a"), size: 70, kind: NodeKind::Directory, children: None },
-            Node { path: PathBuf::from("b"), size: 20, kind: NodeKind::Directory, children: None },
-            Node { path: PathBuf::from("c"), size: 10, kind: NodeKind::Directory, children: None },
+            Node { path: PathBuf::from("a"), size: 70, kind: NodeKind::Directory },
+            Node { path: PathBuf::from("b"), size: 20, kind: NodeKind::Directory },
+            Node { path: PathBuf::from("c"), size: 10, kind: NodeKind::Directory },
         ];
         let bounds = Bounds { x: 0, y: 0, width: 120, height: 40 };
-        let rects = compute_partition(Path::new("/"), &nodes, bounds);
+        let rects = compute_partition_oriented(Path::new("/"), &nodes, bounds, true);
 
         let mut total_area: u32 = 0;
         for rect in &rects {
@@ -307,12 +235,12 @@ mod tests {
     #[test]
     fn partitions_are_proportional_with_tolerance() {
         let nodes = vec![
-            Node { path: PathBuf::from("a"), size: 500, kind: NodeKind::Directory, children: None },
-            Node { path: PathBuf::from("b"), size: 300, kind: NodeKind::Directory, children: None },
-            Node { path: PathBuf::from("c"), size: 200, kind: NodeKind::Directory, children: None },
+            Node { path: PathBuf::from("a"), size: 500, kind: NodeKind::Directory },
+            Node { path: PathBuf::from("b"), size: 300, kind: NodeKind::Directory },
+            Node { path: PathBuf::from("c"), size: 200, kind: NodeKind::Directory },
         ];
         let bounds = Bounds { x: 0, y: 0, width: 200, height: 60 };
-        let rects = compute_partition(Path::new("/"), &nodes, bounds);
+        let rects = compute_partition_oriented(Path::new("/"), &nodes, bounds, true);
 
         let total_size: u64 = nodes.iter().map(|n| n.size).sum();
         let total_area = f64::from(bounds.width) * f64::from(bounds.height);
@@ -322,14 +250,7 @@ mod tests {
             area_by_path.insert(rect.path.clone(), area(rect));
         }
 
-        // Find which items are directly shown vs grouped into <Other>
-        let _other_path = PathBuf::from("<Other>");
-        let directly_shown: Vec<_> = nodes.iter()
-            .filter(|n| area_by_path.contains_key(&n.path))
-            .collect();
-
-        // Check proportionality only for directly shown items
-        for node in directly_shown {
+        for node in &nodes {
             let actual = f64::from(*area_by_path.get(&node.path).unwrap_or(&0));
             let expected = (node.size as f64 / total_size as f64) * total_area;
             let diff_ratio = if total_area > 0.0 {

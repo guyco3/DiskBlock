@@ -3,7 +3,7 @@ use crate::format::{human_size, pct_of};
 use crate::layout::{compute_partition_oriented, Bounds};
 use crate::types::RectNode;
 use ratatui::prelude::*;
-use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
+use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph, Wrap};
 
 pub fn draw(frame: &mut Frame, app: &App) {
     let chunks = split_main_layout(frame.area());
@@ -53,28 +53,31 @@ fn draw_top_bar(frame: &mut Frame, app: &App, area: Rect) {
 }
 
 fn draw_main(frame: &mut Frame, app: &App, area: Rect) {
-    // Paint the canvas black so gaps between rects read as intentional margins.
     let bg = Paragraph::new(" ").style(Style::default().bg(Color::Black));
     frame.render_widget(bg, area);
 
-    if !app.is_viewing_other() {
-        let Some(state) = app.current_state() else {
-            frame.render_widget(Paragraph::new("No data"), area);
-            return;
-        };
+    let Some(state) = app.current_state() else {
+        frame.render_widget(Paragraph::new("No data"), area);
+        return;
+    };
 
-        if state.loading && state.children.is_empty() {
-            frame.render_widget(Paragraph::new("Scanning...").block(Block::default().borders(Borders::ALL)), area);
-            return;
-        }
+    if state.loading && state.children.is_empty() {
+        let scanning_text = format!("Scanning...\n{}", app.status);
+        frame.render_widget(
+            Paragraph::new(scanning_text)
+                .wrap(Wrap { trim: true })
+                .block(Block::default().borders(Borders::ALL).title("Scanner")),
+            area,
+        );
+        return;
+    }
 
-        if let Some(err) = &state.error {
-            frame.render_widget(
-                Paragraph::new(err.clone()).block(Block::default().borders(Borders::ALL).title("Error")),
-                area,
-            );
-            return;
-        }
+    if let Some(err) = &state.error {
+        frame.render_widget(
+            Paragraph::new(err.clone()).block(Block::default().borders(Borders::ALL).title("Error")),
+            area,
+        );
+        return;
     }
 
     let bounds = Bounds {
@@ -93,6 +96,8 @@ fn draw_main(frame: &mut Frame, app: &App, area: Rect) {
     };
 
     let rects = compute_partition_oriented(&app.current_path, &render_nodes, bounds, true);
+    let max_x = area.x.saturating_add(area.width);
+    let max_y = area.y.saturating_add(area.height);
     for (idx, rect) in rects.iter().enumerate() {
         let is_selected = idx == app.selected_idx;
         let child_loading = app
@@ -100,17 +105,25 @@ fn draw_main(frame: &mut Frame, app: &App, area: Rect) {
             .get(&rect.path)
             .map(|s| s.loading)
             .unwrap_or(false);
-        draw_rect(frame, rect, is_selected, child_loading);
+        draw_rect(frame, rect, is_selected, child_loading, max_x, max_y);
     }
 }
 
-fn draw_rect(frame: &mut Frame, rect: &RectNode, selected: bool, child_loading: bool) {
+fn draw_rect(
+    frame: &mut Frame,
+    rect: &RectNode,
+    selected: bool,
+    child_loading: bool,
+    max_x: u16,
+    max_y: u16,
+) {
     let mut area = Rect::new(rect.x, rect.y, rect.width, rect.height);
-    // Add a 1-cell gutter on right/bottom edges for visual separation.
-    if area.width > 1 {
+    let touches_right_edge = area.x.saturating_add(area.width) >= max_x;
+    let touches_bottom_edge = area.y.saturating_add(area.height) >= max_y;
+    if area.width > 1 && !touches_right_edge {
         area.width = area.width.saturating_sub(1);
     }
-    if area.height > 1 {
+    if area.height > 1 && !touches_bottom_edge {
         area.height = area.height.saturating_sub(1);
     }
 
@@ -142,86 +155,76 @@ fn draw_rect(frame: &mut Frame, rect: &RectNode, selected: bool, child_loading: 
         loading_suffix
     );
 
-    let fill_color = if rect.is_dir {
-        dir_color_for_path(&rect.path)
-    } else {
-        Color::Rgb(200, 200, 200)
-    };
-    let border_color = if rect.is_dir {
-        brighten_neon(fill_color)
-    } else {
-        Color::Rgb(230, 230, 230)
-    };
+    let fill_color = dir_color_for_path(&rect.path);
+    let border_color = brighten_neon(fill_color);
 
-    // Fill directories completely; keep files as outline-only.
     if rect.is_dir {
         let fill = Paragraph::new(" ").style(Style::default().bg(fill_color));
         frame.render_widget(fill, area);
     }
 
     let base_style = if rect.is_dir {
+        Style::default().fg(border_color).bg(fill_color)
+    } else {
+        Style::default().fg(border_color).bg(Color::Black)
+    };
+
+    let title_style = if selected {
+        Style::default()
+            .fg(Color::Black)
+            .bg(Color::White)
+            .add_modifier(Modifier::BOLD)
+    } else if rect.is_dir {
         Style::default()
             .fg(text_color_for_bg(fill_color))
             .bg(fill_color)
+            .add_modifier(Modifier::BOLD)
     } else {
-        Style::default().fg(Color::Rgb(210, 210, 210))
+        Style::default().fg(Color::White).bg(Color::Black).add_modifier(Modifier::BOLD)
     };
 
     let block = Block::default()
         .borders(Borders::ALL)
+        .border_type(if rect.is_dir {
+            BorderType::Double
+        } else {
+            BorderType::Plain
+        })
         .border_style(if selected {
             Style::default().fg(Color::Black).bg(Color::White).add_modifier(Modifier::BOLD)
         } else {
             base_style
         })
+        .title_style(title_style)
         .title(title);
 
     frame.render_widget(block, area);
 
-    if rect.is_other && !rect.other_items.is_empty() && area.width >= 12 && area.height >= 6 {
-        let max_lines = usize::from(area.height.saturating_sub(2)).saturating_sub(1);
-        let take_n = max_lines.min(rect.other_items.len());
-        let mut lines = rect
-            .other_items
-            .iter()
-            .take(take_n)
-            .map(|name| format!("- {}", truncate(name, usize::from(area.width.saturating_sub(4)))))
-            .collect::<Vec<_>>();
-        if rect.other_items.len() > take_n {
-            lines.push(format!("+{} more", rect.other_items.len() - take_n));
-        }
-
-        let list_fg = if rect.is_dir {
-            text_color_for_bg(dir_color_for_path(&rect.path))
-        } else {
-            Color::White
-        };
-        let list = Paragraph::new(lines.join("\n")).style(Style::default().fg(list_fg));
+    if !rect.is_dir {
         let inner = Rect::new(
             area.x.saturating_add(1),
             area.y.saturating_add(1),
             area.width.saturating_sub(2),
             area.height.saturating_sub(2),
         );
-        frame.render_widget(list, inner);
+        draw_diagonal_stripes(frame, inner, border_color);
     }
 }
 
 fn dir_color_for_path(path: &std::path::Path) -> Color {
-    // Neon-only palette.
     const PALETTE: [Color; 12] = [
-        Color::Rgb(0, 255, 214),   // neon aqua
-        Color::Rgb(57, 255, 20),   // electric lime
-        Color::Rgb(255, 49, 146),  // hot neon pink
-        Color::Rgb(0, 229, 255),   // neon cyan
-        Color::Rgb(255, 111, 0),   // vivid orange
-        Color::Rgb(166, 77, 255),  // electric violet
-        Color::Rgb(0, 99, 255),    // laser blue
-        Color::Rgb(255, 214, 10),  // neon yellow
-        Color::Rgb(255, 0, 255),   // magenta
-        Color::Rgb(0, 255, 127),   // spring green
-        Color::Rgb(255, 20, 60),   // neon crimson
-        Color::Rgb(64, 224, 255),  // electric sky
+        Color::Rgb(0, 255, 214),
+        Color::Rgb(57, 255, 20),
+        Color::Rgb(255, 49, 146),
+        Color::Rgb(0, 229, 255),
+        Color::Rgb(255, 111, 0),
+        Color::Rgb(166, 77, 255),
+        Color::Rgb(0, 99, 255),
+        Color::Rgb(255, 214, 10),
+        Color::Rgb(255, 0, 255),
+        Color::Rgb(0, 255, 127),
+        Color::Rgb(255, 20, 60),
+        Color::Rgb(64, 224, 255),
     ];
 
     let mut h: u64 = 1469598103934665603;
@@ -257,6 +260,28 @@ fn text_color_for_bg(bg: Color) -> Color {
     }
 }
 
+fn draw_diagonal_stripes(frame: &mut Frame, area: Rect, color: Color) {
+    if area.width == 0 || area.height == 0 {
+        return;
+    }
+
+    let mut lines = Vec::with_capacity(usize::from(area.height));
+    for y in 0..area.height {
+        let mut line = String::with_capacity(usize::from(area.width));
+        for x in 0..area.width {
+            if ((x + y) % 3) == 0 {
+                line.push('/');
+            } else {
+                line.push(' ');
+            }
+        }
+        lines.push(line);
+    }
+
+    let stripes = Paragraph::new(lines.join("\n")).style(Style::default().fg(color).bg(Color::Black));
+    frame.render_widget(stripes, area);
+}
+
 fn draw_bottom_bar(frame: &mut Frame, app: &App, area: Rect, selected: Option<&RectNode>) {
     let text = if let Some(selected) = selected {
         let parent_size = app
@@ -276,7 +301,10 @@ fn draw_bottom_bar(frame: &mut Frame, app: &App, area: Rect, selected: Option<&R
             app.status
         )
     } else {
-        format!("{} | du-based view | [c] copy path | [?] help", app.status)
+        format!(
+            "{} | du-based view | [c] copy path | [?] help",
+            app.status
+        )
     };
 
     let p = Paragraph::new(text)
