@@ -1,11 +1,11 @@
 # memblocks
 
-[![CI](https://github.com/guyco3/DiskBlock/actions/workflows/ci.yml/badge.svg)](https://github.com/guyco3/memblocks/actions/workflows/ci.yml)
+[![CI](https://github.com/guyco3/memblocks/actions/workflows/ci.yml/badge.svg)](https://github.com/guyco3/memblocks/actions/workflows/ci.yml)
 
 memblocks is a macOS terminal disk usage visualizer written in Rust.
 It renders the current directory as a treemap-like partition where every immediate child (directories and files) is shown proportionally by size.
 
-![DiskBlock example](static/example.jpg)
+![memblocks example](static/example.jpg)
 
 ## Features
 
@@ -42,7 +42,7 @@ cargo run -- /
 Run release binary:
 
 ```bash
-./target/release/diskblock /
+./target/release/memblocks/
 ```
 
 You can replace `/` with any start path, for example:
