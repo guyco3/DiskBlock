@@ -12,10 +12,3 @@ pub fn human_size(bytes: u64) -> String {
         format!("{value:.1} {}", UNITS[unit])
     }
 }
-
-pub fn pct_of(value: u64, total: u64) -> f64 {
-    if total == 0 {
-        return 0.0;
-    }
-    (value as f64 / total as f64) * 100.0
-}

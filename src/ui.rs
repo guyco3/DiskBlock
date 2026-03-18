@@ -1,5 +1,5 @@
 use crate::app::App;
-use crate::format::{human_size, pct_of};
+use crate::format::human_size;
 use crate::layout::{compute_partition_oriented, Bounds};
 use crate::types::RectNode;
 use ratatui::prelude::*;
@@ -62,7 +62,7 @@ fn draw_main(frame: &mut Frame, app: &App, area: Rect) {
     };
 
     if state.loading && state.children.is_empty() {
-        let scanning_text = format!("Scanning...\n{}", app.status);
+        let scanning_text = format!("Scanning {}...\n{}", app.spinner_char(), app.status);
         frame.render_widget(
             Paragraph::new(scanning_text)
                 .wrap(Wrap { trim: true })
@@ -283,27 +283,34 @@ fn draw_diagonal_stripes(frame: &mut Frame, area: Rect, color: Color) {
 }
 
 fn draw_bottom_bar(frame: &mut Frame, app: &App, area: Rect, selected: Option<&RectNode>) {
-    let text = if let Some(selected) = selected {
-        let parent_size = app
-            .current_state()
-            .map(|s| if s.size > 0 { s.size } else { s.loaded_size })
-            .unwrap_or(0);
-        let pct_parent = pct_of(selected.size, parent_size);
-        let pct_root = pct_of(selected.size, app.root_size);
-        let pct_disk = pct_of(selected.size, app.disk_total);
-        format!(
-            "{} | size={} | {:.1}% parent | {:.1}% root | {:.1}% disk | du-based view | [c] copy path | [?] help | {}",
-            selected.path.display(),
-            human_size(selected.size),
-            pct_parent,
-            pct_root,
-            pct_disk,
-            app.status
-        )
+    let text = if let Some(state) = app.current_state() {
+        let processed = state.children.len();
+        if state.loading {
+            format!(
+                "{} Scanning {} | Calculating files/dirs... | items processed: {}/? | disk: {} | [c] copy path | [?] help",
+                app.spinner_char(),
+                app.current_path.display(),
+                processed,
+                human_size(app.disk_total)
+            )
+        } else {
+            let selected_text = selected
+                .map(|rect| format!(" | selected: {} ({})", rect.path.display(), human_size(rect.size)))
+                .unwrap_or_default();
+            format!(
+                "Ready | {} | items: {}{} | disk: {} | [c] copy path | [?] help",
+                app.current_path.display(),
+                processed,
+                selected_text,
+                human_size(app.disk_total)
+            )
+        }
     } else {
         format!(
-            "{} | du-based view | [c] copy path | [?] help",
-            app.status
+            "{} Scanning {} | Calculating files/dirs... | items processed: 0/? | disk: {} | [c] copy path | [?] help",
+            app.spinner_char(),
+            app.current_path.display(),
+            human_size(app.disk_total)
         )
     };
 

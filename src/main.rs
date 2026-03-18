@@ -69,6 +69,8 @@ fn run_app(
     let mut prompted_sudo_paths: HashSet<PathBuf> = HashSet::new();
 
     loop {
+        app.tick_spinner();
+
         while let Ok(event) = app.scanner.rx.try_recv() {
             match event {
                 crate::types::ScanEvent::PermissionRequired { path } => {

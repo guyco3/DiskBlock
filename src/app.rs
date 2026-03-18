@@ -4,6 +4,7 @@ use crate::scanner::ScannerHandle;
 use crate::types::{Node, NodeKind, RectNode, ScanEvent};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 /// Direction for geometric sibling navigation.
 #[derive(Debug, Clone, Copy)]
@@ -39,6 +40,8 @@ pub struct App {
     pub disk_total: u64,
     sudo_paths: HashSet<PathBuf>,
     cache: CacheStore,
+    spinner_frame: usize,
+    spinner_last_tick: Instant,
     pub show_help: bool,
 }
 
@@ -83,6 +86,8 @@ impl App {
             disk_total: crate::scanner::disk_total_bytes(&root_path).unwrap_or(0),
             sudo_paths: HashSet::new(),
             cache,
+            spinner_frame: 0,
+            spinner_last_tick: Instant::now(),
             show_help: false,
         };
 
@@ -107,6 +112,18 @@ impl App {
 
     pub fn current_state(&self) -> Option<&DirectoryState> {
         self.dirs.get(&self.current_path)
+    }
+
+    pub fn tick_spinner(&mut self) {
+        if self.spinner_last_tick.elapsed() >= Duration::from_millis(120) {
+            self.spinner_frame = (self.spinner_frame + 1) % 4;
+            self.spinner_last_tick = Instant::now();
+        }
+    }
+
+    pub fn spinner_char(&self) -> char {
+        const FRAMES: [char; 4] = ['|', '/', '-', '\\'];
+        FRAMES[self.spinner_frame % FRAMES.len()]
     }
 
     pub fn current_render_nodes(&self) -> Option<Vec<Node>> {
