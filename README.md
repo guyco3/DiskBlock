@@ -16,16 +16,15 @@ It renders the current directory as a treemap-like partition where every immedia
 
 ## Quick Start
 
-Build:
+First clone the github repo
+```bash
+git clone https://github.com/guyco3/memblocks.git
+```
+
+Then build:
 
 ```bash
 cargo build --release
-```
-
-Run from source:
-
-```bash
-cargo run -- /
 ```
 
 Run release binary:
@@ -39,6 +38,33 @@ You can replace `/` with any start path, for example:
 ```bash
 cargo run -- ~/Library
 cargo run -- /System
+```
+
+## Install From Release
+
+Install the latest macOS release artifact directly:
+
+```bash
+curl -fsSL -o /tmp/memblocks-macos.tar.gz \
+	https://github.com/guyco3/memblocks/releases/latest/download/memblocks-macos.tar.gz
+tar -xzf /tmp/memblocks-macos.tar.gz -C /tmp
+install -m 755 /tmp/memblocks /usr/local/bin/memblocks
+```
+
+Install a specific version (example: `v0.1.0`):
+
+```bash
+VERSION=v0.1.0
+curl -fsSL -o /tmp/memblocks-macos.tar.gz \
+	"https://github.com/guyco3/memblocks/releases/download/${VERSION}/memblocks-macos.tar.gz"
+tar -xzf /tmp/memblocks-macos.tar.gz -C /tmp
+install -m 755 /tmp/memblocks /usr/local/bin/memblocks
+```
+
+Run after install:
+
+```bash
+memblocks /
 ```
 
 ## Keybindings
@@ -60,15 +86,6 @@ memblocks stores scan results between runs in:
 On startup/navigation, cached entries are reused only when they are still fresh.
 If files/directories were created, deleted, or modified since a snapshot was taken,
 the cache entry is invalidated and the directory is scanned again.
-
-## Data Model
-
-- Size source: `du -sk <path>` (or `sudo -n du -sk <path>` when privileged)
-- Display unit: bytes (`KB * 1024`)
-- Bottom bar:
-	- While loading: animated spinner + current path + `items processed: x/?` + disk size
-	- When ready: `Ready` + current path + total item count + selected item summary + disk size
-- Disk total source: `df -k <root_path>`
 
 ## Status Messages
 
