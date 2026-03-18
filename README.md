@@ -1,18 +1,11 @@
-# DiskBlock
+# memblocks
 
-[![CI](https://github.com/guyco3/DiskBlock/actions/workflows/ci.yml/badge.svg)](https://github.com/guyco3/DiskBlock/actions/workflows/ci.yml)
+[![CI](https://github.com/guyco3/DiskBlock/actions/workflows/ci.yml/badge.svg)](https://github.com/guyco3/memblocks/actions/workflows/ci.yml)
 
-DiskBlock is a macOS terminal disk usage visualizer written in Rust.
+memblocks is a macOS terminal disk usage visualizer written in Rust.
 It renders the current directory as a treemap-like partition where every immediate child (directories and files) is shown proportionally by size.
 
 ![DiskBlock example](static/example.jpg)
-
-## Why DiskBlock
-
-- Fast, keyboard-driven inspection of large directories
-- Visual comparison of file and directory sizes in one screen
-- Responsive scanning with incremental updates
-- Minimal dependencies and a simple CLI workflow
 
 ## Features
 
