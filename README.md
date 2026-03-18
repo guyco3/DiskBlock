@@ -31,7 +31,7 @@ cargo run -- /
 Run release binary:
 
 ```bash
-./target/release/memblocks/
+./target/release/memblocks
 ```
 
 You can replace `/` with any start path, for example:
@@ -66,9 +66,16 @@ the cache entry is invalidated and the directory is scanned again.
 - Size source: `du -sk <path>` (or `sudo -n du -sk <path>` when privileged)
 - Display unit: bytes (`KB * 1024`)
 - Bottom bar:
-	- While loading: animated spinner + current path + `items processed: x/?`
-	- When ready: `Ready` + current path + total item count + selected item summary
+	- While loading: animated spinner + current path + `items processed: x/?` + disk size
+	- When ready: `Ready` + current path + total item count + selected item summary + disk size
 - Disk total source: `df -k <root_path>`
+
+## Status Messages
+
+Examples you may see in the bottom bar:
+
+- Loading: `| Scanning /Users/user | Calculating files/dirs... | items processed: 42/? | disk: 926.4 GB | [c] copy path | [?] help`
+- Ready: `Ready | /Users/user | items: 187 | selected: /Users/user/Documents (8.3 GB) | disk: 926.4 GB | [c] copy path | [?] help`
 
 ## Build And Test
 
@@ -81,6 +88,8 @@ cargo test
 
 - `src/main.rs`: terminal lifecycle and key handling
 - `src/app.rs`: application state and navigation behavior
+- `src/cache.rs`: persistent on-disk cache loading/saving and freshness validation
+- `src/format.rs`: size formatting helpers used by UI/status text
 - `src/scanner.rs`: filesystem scanning and watch invalidation
 - `src/layout.rs`: rectangle partition algorithm and tests
 - `src/ui.rs`: terminal rendering
