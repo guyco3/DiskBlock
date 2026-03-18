@@ -1,4 +1,5 @@
 use crate::format::human_size;
+use crate::cache::CacheStore;
 use crate::scanner::ScannerHandle;
 use crate::types::{Node, NodeKind, RectNode, ScanEvent};
 use std::collections::{HashMap, HashSet};
@@ -37,16 +38,20 @@ pub struct App {
     pub root_size: u64,
     pub disk_total: u64,
     sudo_paths: HashSet<PathBuf>,
+    cache: CacheStore,
     pub show_help: bool,
 }
 
 impl App {
     /// Creates a new app rooted at `root_path` and starts the initial scan.
     pub fn new(root_path: PathBuf, scanner: ScannerHandle) -> Self {
+        let mut cache = CacheStore::load_default();
         let mut dirs = HashMap::new();
+        let root_cached = cache.get_fresh_directory_state(&root_path);
+
         dirs.insert(
             root_path.clone(),
-            DirectoryState {
+            root_cached.unwrap_or(DirectoryState {
                 children: Vec::new(),
                 size: 0,
                 loaded_size: 0,
@@ -54,8 +59,18 @@ impl App {
                 loading: true,
                 loaded: false,
                 error: None,
-            },
+            }),
         );
+
+        let status = if dirs
+            .get(&root_path)
+            .map(|s| s.loaded && !s.children.is_empty())
+            .unwrap_or(false)
+        {
+            format!("Loaded from cache {}", root_path.display())
+        } else {
+            "Scanning...".to_string()
+        };
 
         let app = Self {
             current_path: root_path.clone(),
@@ -63,14 +78,30 @@ impl App {
             scanner,
             dirs,
             selected_idx: 0,
-            status: "Scanning...".to_string(),
+            status,
             root_size: 0,
             disk_total: crate::scanner::disk_total_bytes(&root_path).unwrap_or(0),
             sudo_paths: HashSet::new(),
+            cache,
             show_help: false,
         };
 
-        app.scanner.request(root_path, false);
+        let mut app = app;
+        app.root_size = app
+            .dirs
+            .get(&root_path)
+            .map(|s| s.size)
+            .unwrap_or(0);
+
+        app.scanner.watch(root_path.clone());
+        if !app
+            .dirs
+            .get(&root_path)
+            .map(|s| s.loaded)
+            .unwrap_or(false)
+        {
+            app.scanner.request(root_path, false);
+        }
         app
     }
 
@@ -224,34 +255,69 @@ impl App {
         self.selected_idx = 0;
 
         if !self.dirs.contains_key(&selected.path) {
-            self.dirs.insert(
-                selected.path.clone(),
-                DirectoryState {
-                    children: Vec::new(),
-                    size: selected.size,
-                    loaded_size: 0,
-                    size_locked: selected.size > 0,
-                    loading: true,
-                    loaded: false,
-                    error: None,
-                },
-            );
-            let scan_with_sudo = self.sudo_paths.contains(&selected.path);
-            self.scanner.request(selected.path.clone(), scan_with_sudo);
-            self.status = format!("Scanning {}", selected.path.display());
+            if let Some(state) = self.cache.get_fresh_directory_state(&selected.path) {
+                self.dirs.insert(selected.path.clone(), state);
+                self.status = format!("Loaded from cache {}", selected.path.display());
+            } else {
+                self.dirs.insert(
+                    selected.path.clone(),
+                    DirectoryState {
+                        children: Vec::new(),
+                        size: selected.size,
+                        loaded_size: 0,
+                        size_locked: selected.size > 0,
+                        loading: true,
+                        loaded: false,
+                        error: None,
+                    },
+                );
+                let scan_with_sudo = self.sudo_paths.contains(&selected.path);
+                self.scanner.request(selected.path.clone(), scan_with_sudo);
+                self.status = format!("Scanning {}", selected.path.display());
+            }
         }
 
         self.scanner.watch(selected.path.clone());
     }
 
     pub fn go_parent(&mut self) {
-        if self.current_path == self.root_path {
-            return;
-        }
         if let Some(parent) = self.current_path.parent() {
-            self.current_path = parent.to_path_buf();
+            // Stop only when we reach the filesystem root (parent == current on Unix)
+            if parent == self.current_path {
+                return;
+            }
+            
+            let parent_path = parent.to_path_buf();
+            
+            // Request scan if this path hasn't been loaded yet
+            if !self.dirs.contains_key(&parent_path) {
+                if let Some(state) = self.cache.get_fresh_directory_state(&parent_path) {
+                    self.dirs.insert(parent_path.clone(), state);
+                    self.status = format!("Loaded from cache {}", parent_path.display());
+                } else {
+                    self.dirs.insert(
+                        parent_path.clone(),
+                        DirectoryState {
+                            children: Vec::new(),
+                            size: 0,
+                            loaded_size: 0,
+                            size_locked: false,
+                            loading: true,
+                            loaded: false,
+                            error: None,
+                        },
+                    );
+                    let scan_with_sudo = self.sudo_paths.contains(&parent_path);
+                    self.scanner.request(parent_path.clone(), scan_with_sudo);
+                    self.status = format!("Scanning {}", parent_path.display());
+                }
+            } else {
+                self.status = format!("Viewing {}", parent_path.display());
+            }
+            
+            self.current_path = parent_path.clone();
             self.selected_idx = 0;
-            self.status = format!("Viewing {}", self.current_path.display());
+            self.scanner.watch(parent_path);
         }
     }
 
@@ -278,6 +344,7 @@ impl App {
                 state.loading = false;
                 state.loaded = true;
                 state.error = None;
+                self.cache.put_directory_state(&result.path, state);
 
                 if result.path == self.root_path {
                     self.root_size = state.size;
@@ -366,6 +433,10 @@ impl App {
                 }
             }
         }
+    }
+
+    pub fn persist_cache(&self) -> Result<(), String> {
+        self.cache.save()
     }
 
     pub fn rescan_with_sudo(&mut self, path: PathBuf) {

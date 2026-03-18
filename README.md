@@ -47,9 +47,19 @@ cargo run -- /System
 - Arrow keys: geometric movement between neighboring rectangles
 - `j` / `k`: next / previous item
 - `Enter` or `l`: enter selected directory
-- `h`, `u`, `Backspace`: go to parent directory
+- `h`, `u`, `Backspace`: go to parent directory (works up to filesystem root)
 - `c`: copy selected path to clipboard
 - `?`: toggle help
+
+## Cache
+
+memblocks stores scan results between runs in:
+
+- `~/Library/Caches/diskblock/cache.json`
+
+On startup/navigation, cached entries are reused only when they are still fresh.
+If files/directories were created, deleted, or modified since a snapshot was taken,
+the cache entry is invalidated and the directory is scanned again.
 
 ## Data Model
 

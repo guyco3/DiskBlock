@@ -1,5 +1,6 @@
 mod actions;
 mod app;
+mod cache;
 mod format;
 mod layout;
 mod scanner;
@@ -52,6 +53,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     if let Err(err) = run_result {
         eprintln!("error: {err}");
+    }
+
+    if let Err(err) = app.persist_cache() {
+        eprintln!("cache save error: {err}");
     }
 
     Ok(())
