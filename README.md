@@ -7,17 +7,6 @@ It renders the current directory as a treemap-like partition where every immedia
 
 ![memblocks example](static/example.jpg)
 
-## Features
-
-- Treemap-style proportional layout for all entries in the current directory
-- Incremental background scanning with partial UI updates
-- Stable loading behavior while child sizes stream in
-- Geometric navigation using arrow keys
-- Vim-style sibling navigation with `j` and `k`
-- Sudo re-scan flow for protected directories
-- Copy selected path to clipboard (`pbcopy`)
-- File watcher invalidation for refreshed directory views
-
 ## Requirements
 
 - macOS
