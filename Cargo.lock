@@ -198,20 +198,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "diskblock"
-version = "0.1.0"
-dependencies = [
- "crossbeam-channel",
- "crossterm 0.29.0",
- "notify",
- "ratatui",
- "rayon",
- "serde",
- "serde_json",
- "walkdir",
-]
-
-[[package]]
 name = "document-features"
 version = "0.2.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -426,6 +412,20 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "234cf4f4a04dc1f57e24b96cc0cd600cf2af460d4161ac5ecdd0af8e1f3b2a38"
 dependencies = [
  "hashbrown",
+]
+
+[[package]]
+name = "memblocks"
+version = "0.1.0"
+dependencies = [
+ "crossbeam-channel",
+ "crossterm 0.29.0",
+ "notify",
+ "ratatui",
+ "rayon",
+ "serde",
+ "serde_json",
+ "walkdir",
 ]
 
 [[package]]

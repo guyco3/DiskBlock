@@ -133,10 +133,10 @@ fn default_cache_path() -> PathBuf {
         PathBuf::from(home)
             .join("Library")
             .join("Caches")
-            .join("diskblock")
+            .join("memblocks")
             .join("cache.json")
     } else {
-        PathBuf::from(".diskblock-cache.json")
+        PathBuf::from(".memblocks-cache.json")
     }
 }
 

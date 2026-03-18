@@ -55,7 +55,7 @@ cargo run -- /System
 
 memblocks stores scan results between runs in:
 
-- `~/Library/Caches/diskblock/cache.json`
+- `~/Library/Caches/memblocks/cache.json`
 
 On startup/navigation, cached entries are reused only when they are still fresh.
 If files/directories were created, deleted, or modified since a snapshot was taken,
@@ -65,10 +65,9 @@ the cache entry is invalidated and the directory is scanned again.
 
 - Size source: `du -sk <path>` (or `sudo -n du -sk <path>` when privileged)
 - Display unit: bytes (`KB * 1024`)
-- Percentages shown:
-	- `% parent = selected_size / parent_size * 100`
-	- `% root = selected_size / root_size * 100`
-	- `% disk = selected_size / disk_total * 100`
+- Bottom bar:
+	- While loading: animated spinner + current path + `items processed: x/?`
+	- When ready: `Ready` + current path + total item count + selected item summary
 - Disk total source: `df -k <root_path>`
 
 ## Build And Test
