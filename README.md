@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/guyco3/memblocks/actions/workflows/ci.yml/badge.svg)](https://github.com/guyco3/memblocks/actions/workflows/ci.yml)
 
-memblocks is a macOS terminal disk usage visualizer written in Rust.
+memblocks is a macOS terminal disk usage TUI written in Rust.
 It renders the current directory as a treemap-like partition where every immediate child (directories and files) is shown proportionally by size.
 
 ![memblocks example](static/example.jpg)
