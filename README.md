@@ -42,23 +42,23 @@ cargo run -- /System
 
 ## Install From Release
 
-Install the latest macOS release artifact directly:
+Install latest with curl + sh (no clone, no sudo required):
 
 ```bash
-curl -fsSL -o /tmp/memblocks-macos.tar.gz \
-	https://github.com/guyco3/memblocks/releases/latest/download/memblocks-macos.tar.gz
-tar -xzf /tmp/memblocks-macos.tar.gz -C /tmp
-install -m 755 /tmp/memblocks /usr/local/bin/memblocks
+curl -fsSL https://raw.githubusercontent.com/guyco3/memblocks/main/install.sh | sh
+```
+
+By default this installs to `~/.local/bin/memblocks`.
+If `~/.local/bin` is not on your `PATH`, add this to your shell profile:
+
+```bash
+export PATH="$HOME/.local/bin:$PATH"
 ```
 
 Install a specific version (example: `v0.1.0`):
 
 ```bash
-VERSION=v0.1.0
-curl -fsSL -o /tmp/memblocks-macos.tar.gz \
-	"https://github.com/guyco3/memblocks/releases/download/${VERSION}/memblocks-macos.tar.gz"
-tar -xzf /tmp/memblocks-macos.tar.gz -C /tmp
-install -m 755 /tmp/memblocks /usr/local/bin/memblocks
+curl -fsSL https://raw.githubusercontent.com/guyco3/memblocks/main/install.sh | MEMBLOCKS_VERSION=v0.1.0 sh
 ```
 
 Run after install:
